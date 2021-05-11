@@ -1,0 +1,23 @@
+{
+  "name": "sdk_node",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "arweave": "^1.10.13",
+    "axios": "^0.21.1",
+    "dotenv": "^8.5.1",
+    "jsonfile": "^6.1.0",
+    "lodash": "^4.17.21",
+    "nedb-promises": "^4.1.2",
+    "redis": "^3.1.2",
+    "smartweave": "^0.4.29",
+    "webpack": "^5.36.2"
+  }
+}
