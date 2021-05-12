@@ -37,7 +37,7 @@ class node {
       await tools.stake(this.stakeAmount);
     }
 
-    await this.work(this.wallet);
+    for (;;) await this.work(this.wallet);
   }
 
   async work(wallet) {
@@ -60,8 +60,6 @@ class node {
     if (this.isRewardDistributed(contractState, block)) {
       await this.distribute();
     }
-
-    await this.work(wallet);
   }
 
   async checkTxConfirmation(txid, num, task) {
