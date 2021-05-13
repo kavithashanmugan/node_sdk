@@ -18,6 +18,7 @@
     "nedb-promises": "^4.1.2",
     "redis": "^3.1.2",
     "smartweave": "^0.4.29",
+    "util": "^0.12.3",
     "webpack": "^5.36.2"
   }
 }

@@ -17,15 +17,16 @@ const arweave = Arweave.init({
   protocol: "https",
   port: 443,
 });
-
-//const { promisify } = require("util");
+const redisClient = require("../helpers/redis");
+const { promisify } = require("util");
+const redisSetAsync = promisify(redisClient.set).bind(redisClient);
+const redisGetAsync = promisify(redisClient.get).bind(redisClient);
 
 const koi_contract = "ljy4rdr6vKS6-jLgduBz_wlcad4GuKPEuhrRVaUd8tg";
 const bundlerNodes = "https://bundler.openkoi.com:8888/submitVote/";
 
 class koi {
-  constructor(useRedis = false) {
-    this.redisClient = useRedis ? require("../helpers/redis") : null;
+  constructor() {
     this.wallet = {};
     this.myBookmarks = [];
     this.totalVoted = -1;
@@ -56,7 +57,6 @@ class koi {
       this.myBookmarks[artxid] = ref;
       this.myBookmarks[ref] = artxid;
     }
-    const redisClient = this.redisClient;
   }
 
   /*
@@ -251,19 +251,21 @@ class koi {
   async proposeSlash() {
     const state = await this.getContractState();
     const votes = state.votes;
-    for (let i; i < this.reciepts.length - 1; i++) {
-      let element = this.reciepts[i];
-      let voteId = element.vote.vote.voteId;
-      let vote = votes[voteId];
-      if (!vote.voted.includes(this.wallet)) {
-        let input = {
-          function: "proposeSlash",
-          reciept: element,
-        };
-        await this._interactWrite(input);
-      }
+    const dataB = await this.db.find({});
+    let id = dataB[0]._id;
+    let receipt = dataB[0].receipt;
+    const index = receipt.lenght - 1;
+    let lastReciept = receipt[index];
+    let voteId = lastReciept.vote.vote.voteId;
+    let vote = votes[voteId];
+    if (!vote.voted.includes(this.wallet)) {
+      let input = {
+        function: "proposeSlash",
+        reciept: element,
+      };
+      const tx = await this._interactWrite(input);
+      return tx;
     }
-
     return null;
   }
 
@@ -350,70 +352,49 @@ class koi {
 */
 
   async _interactWrite(input) {
-    let redisClient = this.redisClient;
-
     let wallet;
     if (this.wallet !== {}) {
       wallet = this.wallet;
     } else {
       wallet = "use_wallet";
     }
-    if (this.redisClient !== null) {
-      // Adding the dryRun logic
-      let pendingStateArray = await redisGetAsync(
-        "pendingStateArray",
-        redisClient
-      );
-      if (!pendingStateArray) pendingStateArray = [];
-      else pendingStateArray = JSON.parse(pendingStateArray);
-      // get leteststate
-      // let latestContractState=await smartweave.readContract(arweave, koi_contract)
-      let latestContractState = await redisGetAsync(
-        "currentState",
-        redisClient
-      );
-      latestContractState = JSON.parse(latestContractState);
+    // Adding the dryRun logic
+    let pendingStateArray = await redisGetAsync("pendingStateArray");
+    if (!pendingStateArray) pendingStateArray = [];
+    else pendingStateArray = JSON.parse(pendingStateArray);
+    // get leteststate
+    // let latestContractState=await smartweave.readContract(arweave, koi_contract)
+    let latestContractState = await redisGetAsync("currentState");
+    latestContractState = JSON.parse(latestContractState);
 
-      return new Promise(function (resolve, reject) {
-        smartweave
-          .interactWrite(arweave, wallet, koi_contract, input)
-          .then(async (txId) => {
-            pendingStateArray.push({
-              status: "pending",
-              txId: txId,
-              input: input,
-              // dryRunState:response.state,
-            });
-
-            await redisSetAsync(
-              "pendingStateArray",
-              JSON.stringify(pendingStateArray),
-              redisClient
-            );
-            await recalculatePredictedState(
-              wallet,
-              latestContractState,
-              redisClient
-            );
-
-            resolve(txId);
-          })
-          .catch((err) => {
-            reject(err);
+    return new Promise(function (resolve, reject) {
+      smartweave
+        .interactWrite(arweave, wallet, koi_contract, input)
+        .then(async (txId) => {
+          pendingStateArray.push({
+            status: "pending",
+            txId: txId,
+            input: input,
+            // dryRunState:response.state,
           });
-      });
-    } else {
-      return new Promise(function (resolve, reject) {
-        smartweave
-          .interactWrite(arweave, wallet, koi_contract, input)
-          .then((txId) => {
-            resolve(txId);
-          })
-          .catch((err) => {
-            reject(err);
-          });
-      });
-    }
+          await redisSetAsync(
+            "pendingStateArray",
+            JSON.stringify(pendingStateArray)
+          );
+          const finalState = await recalculatePredictedState(
+            wallet,
+            latestContractState
+          );
+          let result = {
+            txId: txId,
+            finalState: finalState,
+          };
+          resolve(result);
+        })
+        .catch((err) => {
+          reject(err);
+        });
+    });
   }
 
   /*
@@ -577,12 +558,10 @@ class koi {
       data: object // data
     */
   async postData(data) {
-    // TODO: define data interface
     let wallet = this.wallet;
 
     const transaction = await arweave.createTransaction(
       {
-        // eslint-disable-next-line no-undef
         data: Buffer.from(JSON.stringify(data, null, 2), "utf8"),
       },
       wallet
@@ -608,13 +587,9 @@ module.exports = koi;
    @_recalculatePredictedState //  internal function, recalculatesThePredictedState based on the pending transactions
    Returns the a promise
  */
-async function recalculatePredictedState(
-  wallet,
-  latestContractState,
-  redisClient
-) {
-  await checkPendingTransactionStatus(redisClient);
-  let pendingStateArray = await redisGetAsync("pendingStateArray", redisClient);
+async function recalculatePredictedState(wallet, latestContractState) {
+  await checkPendingTransactionStatus();
+  let pendingStateArray = await redisGetAsync("pendingStateArray");
   if (!pendingStateArray) {
     console.error("No pending state found");
     return;
@@ -655,20 +630,18 @@ async function recalculatePredictedState(
       console.timeEnd("Time this");
     }
   }
-  console.log("FINAL Predicted STATE", finalState);
+  // console.log("FINAL Predicted STATE", finalState);
+
   if (finalState)
-    await redisSetAsync(
-      "predictedState",
-      JSON.stringify(finalState),
-      redisClient
-    );
+    await redisSetAsync("predictedState", JSON.stringify(finalState));
+  return finalState;
 }
 /*
    @_recalculatePredictedState //  filters out the array for elements that have failed or succeeded
    Returns the a promise
  */
-async function checkPendingTransactionStatus(redisClient) {
-  let pendingStateArray = await redisGetAsync("pendingStateArray", redisClient);
+async function checkPendingTransactionStatus() {
+  let pendingStateArray = await redisGetAsync("pendingStateArray");
   if (!pendingStateArray) {
     console.error("No pending state found");
     return;
@@ -685,32 +658,9 @@ async function checkPendingTransactionStatus(redisClient) {
   pendingStateArray = pendingStateArray.filter((e) => {
     return e.status == "pending";
   });
-  await redisSetAsync(
-    "pendingStateArray",
-    JSON.stringify(pendingStateArray),
-    redisClient
-  );
+  await redisSetAsync("pendingStateArray", JSON.stringify(pendingStateArray));
 }
 
-function redisSetAsync(arg1, arg2, arg3) {
-  const redisClient = arg3;
-  return new Promise(function (resolve, reject) {
-    resolve(redisClient.set(arg1, arg2));
-  });
-  //return promisify(this.redisClient.set).bind(this.redisClient);
-}
-
-function redisGetAsync(arg1, arg2) {
-  const redisClient = arg2;
-  return new Promise(function (resolve, reject) {
-    redisClient.get(arg1, (err, val) => {
-      resolve(val);
-      reject(err);
-    });
-  });
-
-  // return promisify(this.redisClient.get).bind(this.redisClient);
-}
 async function loadFile(fileName) {
   return new Promise(function (resolve, reject) {
     fs.readFile(fileName)
@@ -727,19 +677,6 @@ async function getArweavenetInfo() {
   return new Promise(function (resolve, reject) {
     axios
       .get("https://arweave.net/info")
-      .then((res) => {
-        resolve(res);
-      })
-      .catch((error) => {
-        reject(error);
-      });
-  });
-}
-
-async function getCacheData(path) {
-  return new Promise(function (resolve, reject) {
-    axios
-      .get(path)
       .then((res) => {
         resolve(res);
       })

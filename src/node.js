@@ -1,6 +1,5 @@
-const koi_tools = require("./tools.js");
+const koi_tools = require("./tool");
 const tools = new koi_tools();
-const axios = require("axios");
 
 /*
 Koi Node Operation: {
@@ -27,7 +26,7 @@ class node {
 
   async run() {
     console.log("entered run node with");
-    await tools.nodeLoadWallet(this.walletFile);
+    await tools.loadWallet(this.walletFile);
     // let state = await tools.getContractState();
     this.wallet = await tools.getWalletAddress();
     console.log(this.wallet);
@@ -50,7 +49,7 @@ class node {
     }
 
     if (this.checkProposeSlash(contractState, block)) {
-      await tools.proposeSlash();
+      await this.proposeSlash();
     }
 
     if (this.isProposalRanked(contractState, block)) {
@@ -99,6 +98,18 @@ class node {
       await this.searchVote(state, wallet);
     }
   }
+  async proposeSlash() {
+    var task = "propose  slashing";
+    var num = 0;
+    let result = await tools.proposeSlash();
+    if (result !== null) {
+      await this.checkTxConfirmation(tx, num, task);
+      console.log("slash is submited");
+      this.isProposeSlashed = true;
+    } else {
+      console.log("no need to slash, bundler sumbit your vote");
+    }
+  }
   async rankProposal() {
     var task = "ranking  reward";
     var num = 0;
@@ -124,11 +135,27 @@ class node {
   }
 
   checkProposeSlash(contractState, block) {
-    const trafficLogs = contractState.stateUpdate.trafficLogs;
-
-    if (block > trafficLogs.close - 150 && block < trafficLogs.close - 75) {
-      return true;
+    let votes = contractState.votes;
+    let receipt = tools.receipt;
+    let activeVoteId = votes[votes.lenght - 1].id;
+    const index = receipt.lenght - 1;
+    let lastReciept = receipt[index];
+    let voteId = lastReciept.vote.vote.voteId;
+    if (activeVoteId == voteId) {
+      let vote = votes[voteId];
+      const trafficLogs = contractState.stateUpdate.trafficLogs;
+      if (
+        !vote.voted.includes(this.wallet) &&
+        block > trafficLogs.close - 150 &&
+        block < trafficLogs.close - 75 &&
+        !this.isProposeSlashed
+      ) {
+        return true;
+      } else {
+        return false;
+      }
     }
+
     return false;
   }
 
